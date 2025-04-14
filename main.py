@@ -29,15 +29,82 @@ async def set_starts() -> List[cl.Starter]:
     ]
 
 
- 
+import requests # Add this import
+import os       # Ensure os is imported if not already
+# --- Weather Tool using your API Key (via .env) ---
 @function_tool
-@cl.step(type="weather tool")
+@cl.step(type="weather tool") # Decorator for visual step in Chainlit UI
 def get_weather(location: str, unit: str = "C") -> str:
-  """
-  Fetch the weather for a given location, returning a short description.
-  """
-  # Example logic
-  return f"The weather in {location} is 22 degrees {unit}."
+    """
+    Fetch the current weather for a given location using OpenWeatherMap,
+    returning a short description including temperature and conditions.
+    Use 'F' for Fahrenheit, otherwise Celsius ('C') is assumed.
+    """
+    # Retrieve the API key securely from environment variables
+    api_key = os.getenv("OPENWEATHERMAP_API_KEY") # <-- Gets your specific key
+    if not api_key:
+        return "Error: Weather API key is not configured."
+
+    # Base URL for OpenWeatherMap Current Weather API (Matches your info)
+    base_url = "https://api.openweathermap.org/data/2.5/weather"
+
+    # Map our unit ('C'/'F') to OpenWeatherMap's 'units' parameter
+    if unit.upper() == "F":
+        units_param = "imperial"
+        unit_symbol = "F"
+    else:
+        units_param = "metric" # Default to Celsius
+        unit_symbol = "C"
+
+    # Parameters for the API request (Matches your info: q, appid, units)
+    params = {
+        "q": location,
+        "appid": api_key, # <-- Using your API key here
+        "units": units_param
+    }
+
+    try:
+        # Make the GET request to the API
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status() # Check for HTTP errors (4xx, 5xx)
+        data = response.json()
+
+        # Check for API-specific errors (e.g., location not found)
+        if data.get("cod") != 200:
+            error_message = data.get("message", f"Could not retrieve weather for {location}.")
+            return f"Error: {error_message}"
+
+        # Extract relevant information
+        city_name = data.get("name", location)
+        description = data["weather"][0]["description"]
+        temperature = data["main"]["temp"]
+
+        # Format the output string
+        return f"The weather in {city_name} is {temperature}°{unit_symbol} with {description}."
+
+    # --- Robust Error Handling ---
+    except requests.exceptions.HTTPError as http_err:
+        status_code = http_err.response.status_code
+        if status_code == 404:
+            return f"Error: Could not find weather data for location '{location}'."
+        elif status_code == 401:
+            # This could mean the key is wrong OR not yet activated
+            return "Error: Invalid or inactive Weather API key. Please check your key and allow activation time."
+        else:
+            return f"Error: HTTP error occurred: {http_err}"
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to the weather service."
+    except requests.exceptions.Timeout:
+        return "Error: The request to the weather service timed out."
+    except requests.exceptions.RequestException as req_err:
+        return f"Error: An error occurred while fetching weather: {req_err}"
+    except KeyError as key_err:
+        print(f"DEBUG: Received unexpected data format: {data}")
+        return f"Error: Received unexpected data format from the weather service for {location}. Missing key: {key_err}"
+    except Exception as e:
+        print(f"Unexpected error in get_weather: {e}")
+        return f"An unexpected error occurred while fetching weather."
+# --- End of weather tool ---
 
 
 @cl.on_chat_start
